@@ -5,7 +5,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
-from langchain_huggingface import HuggingFaceEndpoint
+from langchain_community.llms import Ollama
 from dotenv import load_dotenv, find_dotenv
 
 load_dotenv(find_dotenv())
@@ -58,14 +58,8 @@ def get_vectorstore():
 def set_custom_prompt(custom_prompt_template):
     return PromptTemplate(template=custom_prompt_template, input_variables=["context", "question"])
 
-def load_llm(huggingface_repo_id, HF_TOKEN):
-    return HuggingFaceEndpoint(
-        repo_id=huggingface_repo_id,
-        task="text-generation",
-        temperature=0.5,
-        huggingfacehub_api_token=HF_TOKEN,
-        model_kwargs={"max_length": 512}
-    )
+def load_llm_locally():
+    return Ollama(model="mistral")
 
 def format_response(result, source_documents):
     if any(line.strip().startswith(("-", "*", "1.")) for line in result.splitlines()):
@@ -100,16 +94,13 @@ def main():
     if 'messages' not in st.session_state:
         st.session_state.messages = []
 
-    # Show chat history
     for msg in st.session_state.messages:
         role_class = "user-bubble" if msg['role'] == 'user' else "bot-bubble"
         st.markdown(f"<div class='chat-bubble {role_class}'>{msg['content']}</div>", unsafe_allow_html=True)
 
-    # Get prompt input from the user
     prompt = st.chat_input("Ask a medical question...")
 
     if prompt:
-        # Append the user's message to session state
         st.session_state.messages.append({'role': 'user', 'content': prompt})
 
         CUSTOM_PROMPT_TEMPLATE = """
@@ -123,40 +114,35 @@ def main():
         Start the answer directly. No small talk please.
         """
 
-        HUGGINGFACE_REPO_ID = "mistralai/Mistral-7B-Instruct-v0.3"
-        HF_TOKEN = os.environ.get("HF_TOKEN")
-
         try:
             vectorstore = get_vectorstore()
             if vectorstore is None:
                 st.error("Failed to load the vector store")
                 return
 
-            # Create the QA chain
             qa_chain = RetrievalQA.from_chain_type(
-                llm=load_llm(HUGGINGFACE_REPO_ID, HF_TOKEN),
+                llm=load_llm_locally(),
                 chain_type="stuff",
                 retriever=vectorstore.as_retriever(search_kwargs={'k': 3}),
                 return_source_documents=True,
                 chain_type_kwargs={'prompt': set_custom_prompt(CUSTOM_PROMPT_TEMPLATE)}
             )
 
-            # Get response from the chain
             response = qa_chain.invoke({'query': prompt})
             result = response["result"]
             source_documents = response["source_documents"]
             formatted = format_response(result, source_documents)
 
-            # Append the assistant's response to session state
             st.session_state.messages.append({'role': 'assistant', 'content': formatted})
 
-            # Display the assistant's response
+            st.markdown(f"<div class='chat-bubble user-bubble'>{prompt}</div>", unsafe_allow_html=True)
+
+# Show bot's formatted response
             st.markdown(f"<div class='chat-bubble bot-bubble'>{formatted}</div>", unsafe_allow_html=True)
 
         except Exception as e:
             st.error(f"Error: {str(e)}")
 
-    # Footer with information about the bot
     st.markdown("<div class='footer'>Built with ❤️ using LangChain + Streamlit</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
